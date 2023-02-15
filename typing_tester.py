@@ -1,39 +1,26 @@
 import sys
 
 if sys.version_info < (3, 7, 0):
-    raise RuntimeError("Sorry, python 3.6.0 or later is required")
+    raise RuntimeError("Sorry, python 3.7.0 or later is required")
 
 import os.path
 import copy
-from dataclasses import dataclass
 from typing import Literal
 from tkinter import *
 from tkinter import filedialog
+from state_range import *
 
 
-@dataclass
-class Coord:
-    line: int
-    col: int
-
-
-@dataclass
-class RangeBorders:
-    left: Coord
-    right: Coord
-
-
-@dataclass
-class State:
-    good: RangeBorders
-    bad: RangeBorders
-
+CORRECT = "correct_typing"
+INCORRECT = "incorrect_typing"
+    
 
 class App:
-    # colors for correct and incorrect typing
-    GOOD = "green"
-    BAD = "red"
+    GOOD_COLOR = "green"
+    BAD_COLOR = "red"
+
     START_POS = "1.0"
+    DEFAULT_TEST_PATH = "tests/text.txt"
 
     pos = State(
         good=RangeBorders(left=Coord(line=1, col=0), right=Coord(line=1, col=0)),
@@ -44,20 +31,23 @@ class App:
     _last_pos: str = START_POS
 
     def __init__(self, root_widget):
-        self.default_file = "../Gui/materials/text.txt"
         self.text = Text(root_widget)
         self.text.pack()
         self.text.bind("<KeyPress>", func=self.press_main)
         self.text.bind("<Button-1>", func=self.click)
         self.create_menu(root_widget)
         try:
-            text = self.read_file(self, self.default_file)
+            print(os.path.dirname(os.path.realpath(__file__)))
+            text = self.read_file(f"{os.path.dirname(os.path.realpath(__file__))}/{self.DEFAULT_TEST_PATH}")
             if text != '':
                 self.text.insert("1.0", text)
-        except FileNotFoundError as e:
-            print(f"File {self.default_file} not found")
+        except():
+            print(f"File {os.path.dirname(os.path.realpath(__file__))}/{self.DEFAULT_TEST_PATH} not found")
             pass
         self.text.config(wrap=WORD)  # state="disabled"
+        self.text_setup()
+
+    def text_setup(self):
         self.text.mark_set("current", "1.0")
         self.text.mark_set("insert", "1.0")
         self.text.focus_set()
@@ -71,13 +61,13 @@ class App:
 
     def upd_window(self, state: str, line_in: int, col_in: int):
         left, right = self.get_state(state)
-        if state == "good":
-            color = self.GOOD
+        if state == CORRECT:
+            color = self.GOOD_COLOR
         else:
-            color = self.BAD
+            color = self.BAD_COLOR
             if not self.is_err_on_line(line_in):
-                # First error, use the "good" pointer as init value for the "bad"
-                left, right = self.get_state("good")
+                # First error, use the CORRECT pointer as init value for the INCORRECT
+                left, right = self.get_state(CORRECT)
                 # Check for the case, when full previous line was ok
                 if right.col >= self.get_line_len(right.line):
                     left.line = right.line = right.line + 1
@@ -151,21 +141,21 @@ class App:
 
         return False
 
-    def save_state(self, st_name: Literal["good", "bad"], left: Coord, right: Coord):
-        if st_name == "bad":
+    def save_state(self, st_name: Literal[CORRECT, INCORRECT], left: Coord, right: Coord):
+        if st_name == INCORRECT:
             # We always update right border. But left border we can update only
             # if we are on the same line with right border
             if (self.pos.bad.left.line == self.pos.bad.right.line) or self.pos.bad.left.line == right.line:
                 self.pos.bad.left = left
             self.pos.bad.right = right
-        elif st_name == "good":
+        elif st_name == CORRECT:
             self.pos.good.left = left
             self.pos.good.right = right
 
     def get_state(self, st_name) -> [Coord, Coord]:
-        if st_name == "bad":
+        if st_name == INCORRECT:
             return copy.deepcopy(self.pos.bad.left),  copy.deepcopy(self.pos.bad.right)
-        elif st_name == "good":
+        elif st_name == CORRECT:
             return copy.deepcopy(self.pos.good.left), copy.deepcopy(self.pos.good.right)
         else:
             return
@@ -244,9 +234,9 @@ class App:
         if event.keysym == "BackSpace":
             col -= 1
             if self.is_err_on_line(line):
-                self.upd_window("bad", line, col)
+                self.upd_window(INCORRECT, line, col)
             else:
-                self.upd_window("good", line, col)
+                self.upd_window(CORRECT, line, col)
             return
         else:
             char_pos = f"{line}.{col}"
@@ -255,28 +245,28 @@ class App:
 
         # Character is correct ?
         if event.char == self.text.get(char_pos) and not self.is_err_on_line(line):
-            # print("Gd", f"{char_pos}")
-            self.upd_window("good", line, col)
+            self.upd_window(CORRECT, line, col)
         else:
-            self.upd_window("bad", line, col)
+            self.upd_window(INCORRECT, line, col)
 
-    def create_menu(self, root):
-        menubar = Menu(root)
-        root.config(menu=menubar)
+    def create_menu(self, root_menu):
+        menubar = Menu(root_menu)
+        root_menu.config(menu=menubar)
         file = Menu(menubar, tearoff=0)
-        menubar.add_cascade(menu=file, label="Open File")
         file.add_command(label="File_cmd", command=self.open_file)
+        menubar.add_cascade(menu=file, label="Open File")
 
     def open_file(self):
         f_types = [('All files', '*')]
         filename = filedialog.askopenfilename(initialdir=os.path.dirname(os.path.realpath(__file__)),
                                               title="Select file", filetypes=f_types)
         if filename != '':
-            text = self.read_file(self, filename)
+            text = self.read_file(filename)
             self.text.insert(END, text)
+            self.text_setup()
 
     @staticmethod
-    def read_file(self, filename):
+    def read_file(filename):
         f = open(filename, "r")
         text = f.read()
         return text
@@ -284,7 +274,7 @@ class App:
 
 if __name__ == "__main__":
     root = Tk()
-    width, height = "800", "512"
+    width, height = 800, 512
     root.geometry(f"{width}x{height}+{int((root.winfo_screenwidth()-int(width))/2)}+"
                   f"{int((root.winfo_screenheight()-int(height))/2)}")
     root.minsize(height=height, width=width)
