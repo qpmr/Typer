@@ -13,115 +13,38 @@ from state_range import *
 
 CORRECT = "correct_typing"
 INCORRECT = "incorrect_typing"
-    
+GOOD_COLOR = "green"
+BAD_COLOR = "red"
 
-class App:
-    GOOD_COLOR = "green"
-    BAD_COLOR = "red"
 
-    START_POS = "1.0"
-    DEFAULT_TEST_PATH = "tests/text.txt"
+class StateStorage:
 
     pos = State(
         good=RangeBorders(left=Coord(line=1, col=0), right=Coord(line=1, col=0)),
         bad=RangeBorders(left=Coord(line=1, col=0), right=Coord(line=1, col=0))
     )
 
-    _restore_pos: bool = False
-    _last_pos: str = START_POS
+    def __init__(self):
+        pass
 
-    def __init__(self, root_widget):
-        self.text = Text(root_widget)
-        self.text.pack()
-        self.text.bind("<KeyPress>", func=self.press_main)
-        self.text.bind("<Button-1>", func=self.click)
-        self.create_menu(root_widget)
-        try:
-            print(os.path.dirname(os.path.realpath(__file__)))
-            text = self.read_file(f"{os.path.dirname(os.path.realpath(__file__))}/{self.DEFAULT_TEST_PATH}")
-            if text != '':
-                self.text.insert("1.0", text)
-        except():
-            print(f"File {os.path.dirname(os.path.realpath(__file__))}/{self.DEFAULT_TEST_PATH} not found")
-            pass
-        self.text.config(wrap=WORD)  # state="disabled"
-        self.text_setup()
+    def save_state(self, st_name: Literal[CORRECT, INCORRECT], left: Coord, right: Coord):
+        if st_name == INCORRECT:
+            # We always update right border. But left border we can update only
+            # if we are on the same line with right border
+            if (self.pos.bad.left.line == self.pos.bad.right.line) or self.pos.bad.left.line == right.line:
+                self.pos.bad.left = left
+            self.pos.bad.right = right
+        elif st_name == CORRECT:
+            self.pos.good.left = left
+            self.pos.good.right = right
 
-    def text_setup(self):
-        self.text.mark_set("current", "1.0")
-        self.text.mark_set("insert", "1.0")
-        self.text.focus_set()
-
-    def click(self, event):
-        if event.num == 1:
-            self._restore_pos = True
-
-    def get_line_len(self, line: int):
-        return len(self.text.get(f"{line}.0", f"{line}.end"))
-
-    def upd_window(self, state: str, line_in: int, col_in: int):
-        left, right = self.get_state(state)
-        if state == CORRECT:
-            color = self.GOOD_COLOR
+    def get_state(self, st_name) -> [Coord, Coord]:
+        if st_name == INCORRECT:
+            return copy.deepcopy(self.pos.bad.left), copy.deepcopy(self.pos.bad.right)
+        elif st_name == CORRECT:
+            return copy.deepcopy(self.pos.good.left), copy.deepcopy(self.pos.good.right)
         else:
-            color = self.BAD_COLOR
-            if not self.is_err_on_line(line_in):
-                # First error, use the CORRECT pointer as init value for the INCORRECT
-                left, right = self.get_state(CORRECT)
-                # Check for the case, when full previous line was ok
-                if right.col >= self.get_line_len(right.line):
-                    left.line = right.line = right.line + 1
-                    left.col = right.col = 0
-                else:
-                    left = right
-
-        # Out of the window
-        if line_in == left.line and col_in < left.col:
             return
-
-        # Window continues on the next line
-        if col_in > self.get_line_len(line_in):
-            line_in += 1
-            col_in = 0
-
-        # Try to shrink window
-        if col_in < right.col or line_in < right.line:
-            if line_in < right.line:
-                # Shrink on the PREVIOUS line for ONE letter from the RIGHT
-                saved_borders = self.text.tag_ranges(f"{color}_tag_{line_in}")
-                left_border_col = int(saved_borders[0].string.split(".")[1])
-                self.text.tag_remove(f"{color}_tag_{line_in}", f"{line_in}.{col_in}")
-                self.text.tag_configure(f"{color}_tag_{line_in}", background=f"{color}")
-                self.save_state(state, Coord(line_in, left_border_col), Coord(line_in, col_in))
-                return
-            elif line_in == right.line:
-                # Shrink on the same line for ONE letter from the RIGHT
-                self.text.tag_remove(f"{color}_tag_{right.line}", f"{right.line}.{right.col - 1}")
-                self.text.tag_configure(f"{color}_tag_{right.line}", background=f"{color}")
-                self.save_state(state, left, Coord(right.line, right.col - 1))
-                return
-
-        if line_in == right.line:
-            # Just extend window on the SAME line
-            # But the left side can be on another side!
-            # In this case just use for the left border, line from the right border
-            if left.line != right.line:
-                actual_left_line = right.line
-                actual_left_col = 0
-            else:
-                actual_left_line = left.line
-                actual_left_col = left.col
-
-            self.text.tag_add(f"{color}_tag_{right.line}",
-                              f"{actual_left_line}.{actual_left_col}",
-                              f"{right.line}.{col_in}")
-            self.text.tag_configure(f"{color}_tag_{right.line}", background=f"{color}")
-            self.save_state(state, left, Coord(right.line, col_in))
-        else:
-            # Extend window on the NEXT line
-            self.text.tag_add(f"{color}_tag_{line_in}", f"{line_in}.0", f"{line_in}.{col_in}")
-            self.text.tag_configure(f"{color}_tag_{line_in}", background=f"{color}")
-            self.save_state(state, left, Coord(line_in, col_in))
 
     # TODO make it simpler
     def is_err_on_line(self, line):
@@ -141,26 +64,117 @@ class App:
 
         return False
 
-    def save_state(self, st_name: Literal[CORRECT, INCORRECT], left: Coord, right: Coord):
-        if st_name == INCORRECT:
-            # We always update right border. But left border we can update only
-            # if we are on the same line with right border
-            if (self.pos.bad.left.line == self.pos.bad.right.line) or self.pos.bad.left.line == right.line:
-                self.pos.bad.left = left
-            self.pos.bad.right = right
-        elif st_name == CORRECT:
-            self.pos.good.left = left
-            self.pos.good.right = right
 
-    def get_state(self, st_name) -> [Coord, Coord]:
-        if st_name == INCORRECT:
-            return copy.deepcopy(self.pos.bad.left),  copy.deepcopy(self.pos.bad.right)
-        elif st_name == CORRECT:
-            return copy.deepcopy(self.pos.good.left), copy.deepcopy(self.pos.good.right)
+class TextProcessor:
+
+    def __init__(self, storage: StateStorage, parent):
+        self._storage = storage
+        self._parent = parent
+
+    def upd_window(self, state: str, line_in: int, col_in: int):
+        left, right = self._storage.get_state(state)
+        if state == CORRECT:
+            color = GOOD_COLOR
         else:
+            color = BAD_COLOR
+            if not self._storage.is_err_on_line(line_in):
+                # First error, use the CORRECT pointer as init value for the INCORRECT
+                left, right = self._storage.get_state(CORRECT)
+                # Check for the case, when full previous line was ok
+                if right.col >= self._parent.get_line_len(right.line):
+                    left.line = right.line = right.line + 1
+                    left.col = right.col = 0
+                else:
+                    left = right
+
+        # Out of the window
+        if line_in == left.line and col_in < left.col:
             return
 
-    def press_main(self, event):
+        # Window continues on the next line
+        if col_in > self._parent.get_line_len(line_in):
+            line_in += 1
+            col_in = 0
+
+        # Try to shrink window
+        if col_in < right.col or line_in < right.line:
+            if line_in < right.line:
+                # Shrink on the PREVIOUS line for ONE letter from the RIGHT
+                saved_borders = self._parent.text.tag_ranges(f"{color}_tag_{line_in}")
+                left_border_col = int(saved_borders[0].string.split(".")[1])
+                self._parent.text.tag_remove(f"{color}_tag_{line_in}", f"{line_in}.{col_in}")
+                self._parent.text.tag_configure(f"{color}_tag_{line_in}", background=f"{color}")
+                self._storage.save_state(state, Coord(line_in, left_border_col), Coord(line_in, col_in))
+                return
+            elif line_in == right.line:
+                # Shrink on the same line for ONE letter from the RIGHT
+                self._parent.text.tag_remove(f"{color}_tag_{right.line}", f"{right.line}.{right.col - 1}")
+                self._parent.text.tag_configure(f"{color}_tag_{right.line}", background=f"{color}")
+                self._storage.save_state(state, left, Coord(right.line, right.col - 1))
+                return
+
+        if line_in == right.line:
+            # Just extend window on the SAME line
+            # But the left side can be on another side!
+            # In this case just use for the left border, line from the right border
+            if left.line != right.line:
+                actual_left_line = right.line
+                actual_left_col = 0
+            else:
+                actual_left_line = left.line
+                actual_left_col = left.col
+
+            self._parent.text.tag_add(f"{color}_tag_{right.line}",
+                              f"{actual_left_line}.{actual_left_col}",
+                              f"{right.line}.{col_in}")
+            self._parent.text.tag_configure(f"{color}_tag_{right.line}", background=f"{color}")
+            self._storage.save_state(state, left, Coord(right.line, col_in))
+        else:
+            # Extend window on the NEXT line
+            self._parent.text.tag_add(f"{color}_tag_{line_in}", f"{line_in}.0", f"{line_in}.{col_in}")
+            self._parent.text.tag_configure(f"{color}_tag_{line_in}", background=f"{color}")
+            self._storage.save_state(state, left, Coord(line_in, col_in))
+
+
+class App:
+    START_POS = "1.0"
+    DEFAULT_TEST_PATH = "tests/text.txt"
+
+    _restore_pos: bool = False
+    _last_pos: str = START_POS
+
+    def __init__(self, root_widget):
+        self.text = Text(root_widget)
+        self.text.pack()
+        self.text.bind("<KeyPress>", func=self.press_event)
+        self.text.bind("<Button-1>", func=self.click)
+        self.create_menu(root_widget)
+        try:
+            print(os.path.dirname(os.path.realpath(__file__)))
+            text = self.read_file(f"{os.path.dirname(os.path.realpath(__file__))}/{self.DEFAULT_TEST_PATH}")
+            if text != '':
+                self.text.insert("1.0", text)
+        except():
+            print(f"File {os.path.dirname(os.path.realpath(__file__))}/{self.DEFAULT_TEST_PATH} not found")
+            pass
+        self.text.config(wrap=WORD)  # state="disabled"
+        self.text_setup()
+        self._state_storage = StateStorage()
+        self.txt_proc = TextProcessor(self._state_storage, self)
+
+    def text_setup(self):
+        self.text.mark_set("current", "1.0")
+        self.text.mark_set("insert", "1.0")
+        self.text.focus_set()
+
+    def click(self, event):
+        if event.num == 1:
+            self._restore_pos = True
+
+    def get_line_len(self, line: int):
+        return len(self.text.get(f"{line}.0", f"{line}.end"))
+
+    def press_event(self, event):
         # print("Pressed!", event)
         if not event.char:
             return
@@ -233,10 +247,10 @@ class App:
     def colorize_character(self, event, line: int, col: int):
         if event.keysym == "BackSpace":
             col -= 1
-            if self.is_err_on_line(line):
-                self.upd_window(INCORRECT, line, col)
+            if self._state_storage.is_err_on_line(line):
+                self.txt_proc.upd_window(INCORRECT, line, col)
             else:
-                self.upd_window(CORRECT, line, col)
+                self.txt_proc.upd_window(CORRECT, line, col)
             return
         else:
             char_pos = f"{line}.{col}"
@@ -244,10 +258,10 @@ class App:
         col += 1
 
         # Character is correct ?
-        if event.char == self.text.get(char_pos) and not self.is_err_on_line(line):
-            self.upd_window(CORRECT, line, col)
+        if event.char == self.text.get(char_pos) and not self._state_storage.is_err_on_line(line):
+            self.txt_proc.upd_window(CORRECT, line, col)
         else:
-            self.upd_window(INCORRECT, line, col)
+            self.txt_proc.upd_window(INCORRECT, line, col)
 
     def create_menu(self, root_menu):
         menubar = Menu(root_menu)
