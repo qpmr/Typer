@@ -1,5 +1,6 @@
 import sys
 import os.path
+import math
 
 if sys.version_info < (3, 7, 0):
     raise RuntimeError("Sorry, python 3.7.0 or later is required")
@@ -22,6 +23,7 @@ class App:
     def __init__(self, root_widget):
         self._restore_pos: bool = False
         self._last_pos: str = self.START_POS
+        self._shifted_symbols_hor = 0
 
         self.create_menu(root_widget)
 
@@ -96,7 +98,6 @@ class App:
         return len(self.text.get(f"{line}.0", f"{line}.end"))
 
     def press_event(self, event):
-
         if not event.char:
             return
 
@@ -115,6 +116,7 @@ class App:
             column = self.get_line_len(line) - 1
             self.text.mark_set("insert", "%d.%d" % (line, column + 1))
             self._last_pos = self.text.index(INSERT)
+            self.shift_if_need(column, line, "left", force_r=True)
             return "break"
         else:
             # Colorize character
@@ -140,6 +142,7 @@ class App:
             n_line = 1
             n_char = 0
             column = 0
+            self.shift_if_need(column, line, "left", force_l=True)
         elif event.keysym == "BackSpace":
             if column == 0:
                 self.text.mark_set("insert", "%d.end" % (line - 1))
@@ -147,21 +150,63 @@ class App:
                 self._last_pos = self.text.index(INSERT)
                 return "break"
             else:
+                self.shift_if_need(column, line, "left")
                 n_char = -1
         else:
+            # Shift working area if we reach the widget borders
+            self.shift_if_need(column, line)
             n_char = 1
+
         # Second move cursor
         self.text.mark_set("insert", "%d.%d" % (line + n_line, column + n_char))
         # Save the last position
         self._last_pos = self.text.index(INSERT)
 
+        # Update statistics
         if event.keysym == 'space':
             self.txt_stat.one_word_typed()
         if event.keysym == 'Return':
             self.txt_stat.upd_speed()
-
         self.upd_stat_gui()
+
         return "break"
+
+    def shift_if_need(self, column, line, dir_: str = "right", force_r: bool = False, force_l: bool = False):
+        all_symbols_per_line = self.get_line_len(line)
+        visible_symbols_per_line = self.text.winfo_width() // self.get_font_width()
+
+        right_side_lvl_in_letters = int(math.floor(visible_symbols_per_line *
+                                                   (1 - const.DEFAULT_SHIFT_FOCUS_TRIGGER/100)))
+        left_side_lvl_in_letters = math.ceil(visible_symbols_per_line * const.DEFAULT_SHIFT_FOCUS_TRIGGER/100)
+
+        if force_r:
+            self.shift_text_focus(x_symbols=all_symbols_per_line - visible_symbols_per_line)
+            self._shifted_symbols_hor = all_symbols_per_line - visible_symbols_per_line
+            return
+
+        if force_l:
+            self.text.xview_moveto(0)
+            self._shifted_symbols_hor = 0
+            return
+
+        if dir_ != "left":
+            # Check right border
+            if (column - self._shifted_symbols_hor) >= right_side_lvl_in_letters:
+                r_shift = int(right_side_lvl_in_letters - visible_symbols_per_line/2) % \
+                          (all_symbols_per_line - visible_symbols_per_line)
+                self.shift_text_focus(x_symbols=r_shift)
+                self._shifted_symbols_hor += r_shift
+                print(f"Shifted right {r_shift}")
+
+        # Check left border
+        print(f"curr_col: {column}, shift: {self._shifted_symbols_hor}, l_lvl: {left_side_lvl_in_letters},"
+              f" r_lvl: {right_side_lvl_in_letters}\n all: {all_symbols_per_line}, window: {visible_symbols_per_line}\n")
+
+        if self._shifted_symbols_hor > 0 and column >= left_side_lvl_in_letters and \
+                (column - self._shifted_symbols_hor <= left_side_lvl_in_letters):
+            self._shifted_symbols_hor -= left_side_lvl_in_letters
+            self.shift_text_focus(x_symbols=-left_side_lvl_in_letters)
+            print(f"Shifted left: {left_side_lvl_in_letters}")
 
     def colorize_character(self, event, line: int, col: int):
         if event.keysym == "BackSpace":
@@ -224,6 +269,13 @@ class App:
                                     f"{int((root.winfo_screenheight()-int(self._root.winfo_height()))/2)}")
                 self.text.config(width=max_symbols_per_line)
                 print(self._root.winfo_height(), new_window_width)
+
+    def shift_text_focus(self, x_symbols=None, y_symbols=None):
+        if x_symbols is not None:
+            self.text.xview_scroll(x_symbols, "units")
+        if y_symbols is not None:
+            self.text.yview_scroll(y_symbols, "units")
+        # print(self.text.window_config(width))
 
     def get_font_width(self):
         if self.text:
