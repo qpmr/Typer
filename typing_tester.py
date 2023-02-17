@@ -1,6 +1,8 @@
 import sys
 import os.path
 import math
+import logging
+from logging import StreamHandler
 
 if sys.version_info < (3, 7, 0):
     raise RuntimeError("Sorry, python 3.7.0 or later is required")
@@ -24,6 +26,9 @@ class App:
         self._restore_pos: bool = False
         self._last_pos: str = self.START_POS
         self._shifted_symbols_hor = 0
+        self.logger = logging.getLogger(__name__)
+        self.logger.addHandler(StreamHandler(stream=sys.stdout))
+        self.logger.setLevel(logging.WARNING)
 
         self.create_menu(root_widget)
 
@@ -32,14 +37,11 @@ class App:
         self._root = root_widget
         self.text.bind("<KeyPress>", func=self.press_event)
         self.text.bind("<Button-1>", func=self.click)
-        try:
-            print(os.path.dirname(os.path.realpath(__file__)))
-            text = self.read_file(f"{os.path.dirname(os.path.realpath(__file__))}/{self.DEFAULT_TEST_PATH}")
-            if text != '':
-                self.text.insert("1.0", text)
-        except():
-            print(f"Default file{os.path.dirname(os.path.realpath(__file__))}/{self.DEFAULT_TEST_PATH} not found")
-            pass
+
+        text = self.read_file(f"{os.path.dirname(os.path.realpath(__file__))}/{self.DEFAULT_TEST_PATH}")
+        if text:
+            self.text.insert("1.0", text)
+
         self.text_setup()
 
         # Setup processing core and state storage
@@ -108,7 +110,6 @@ class App:
         current_pos = self.text.index(INSERT)
         line = int(current_pos.split(".")[0])
         column = int(current_pos.split(".")[1])
-        # print(f"Insert: {self.text.index(INSERT)}")
 
         # Go back to the end of previous line
         if event.keysym == "BackSpace" and column == 0 and line != 1:
@@ -196,17 +197,17 @@ class App:
                           (all_symbols_per_line - visible_symbols_per_line)
                 self.shift_text_focus(x_symbols=r_shift)
                 self._shifted_symbols_hor += r_shift
-                print(f"Shifted right {r_shift}")
+                self.logger.debug(f"Shifted right {r_shift}")
 
         # Check left border
-        print(f"curr_col: {column}, shift: {self._shifted_symbols_hor}, l_lvl: {left_side_lvl_in_letters},"
+        self.logger.debug(f"curr_col: {column}, shift: {self._shifted_symbols_hor}, l_lvl: {left_side_lvl_in_letters},"
               f" r_lvl: {right_side_lvl_in_letters}\n all: {all_symbols_per_line}, window: {visible_symbols_per_line}\n")
 
         if self._shifted_symbols_hor > 0 and column >= left_side_lvl_in_letters and \
                 (column - self._shifted_symbols_hor <= left_side_lvl_in_letters):
             self._shifted_symbols_hor -= left_side_lvl_in_letters
             self.shift_text_focus(x_symbols=-left_side_lvl_in_letters)
-            print(f"Shifted left: {left_side_lvl_in_letters}")
+            self.logger.debug(f"Shifted left: {left_side_lvl_in_letters}")
 
     def colorize_character(self, event, line: int, col: int):
         if event.keysym == "BackSpace":
@@ -268,14 +269,13 @@ class App:
                                     f"{int((root.winfo_screenwidth() - int(new_window_width))/2)}+"
                                     f"{int((root.winfo_screenheight()-int(self._root.winfo_height()))/2)}")
                 self.text.config(width=max_symbols_per_line)
-                print(self._root.winfo_height(), new_window_width)
+                self.logger.debug(self._root.winfo_height(), new_window_width)
 
     def shift_text_focus(self, x_symbols=None, y_symbols=None):
         if x_symbols is not None:
             self.text.xview_scroll(x_symbols, "units")
         if y_symbols is not None:
             self.text.yview_scroll(y_symbols, "units")
-        # print(self.text.window_config(width))
 
     def get_font_width(self):
         if self.text:
@@ -283,10 +283,13 @@ class App:
         else:
             return 0
 
-    @staticmethod
-    def read_file(filename):
-        with open(filename, "r") as file:
-            return file.read()
+    def read_file(self, filename):
+        try:
+            with open(filename, "r") as file:
+                return file.read()
+        except FileNotFoundError:
+            self.logger.warning(f"Default file{os.path.dirname(os.path.realpath(__file__))}/{self.DEFAULT_TEST_PATH}"
+                                f" not found")
 
 
 if __name__ == "__main__":
