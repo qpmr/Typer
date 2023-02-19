@@ -6,8 +6,8 @@ class Constants:
     _BAD_COLOR = "red"
 
     DEFAULT_WINDOW_TITLE = "TypingChecker"
-    DEFAULT_WINDOW_WIDTH = 1024
-    DEFAULT_WINDOW_HEIGHT = 650
+    DEFAULT_WINDOW_WIDTH = 640
+    DEFAULT_WINDOW_HEIGHT = 480
     # In percent of the full screen width or height before the cursor
     # is reach this border.
     DEFAULT_SHIFT_FOCUS_TRIGGER = 30

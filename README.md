@@ -1,4 +1,4 @@
-This application can help you improve your typing speed.<br />
+This simple application can help you improve your typing speed.<br />
 It has a GUI based on Tkinter, which means you only need Python 3.7 or later.
 
 <p align="center">

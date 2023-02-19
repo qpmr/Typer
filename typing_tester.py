@@ -26,6 +26,8 @@ class App:
         self._restore_pos: bool = False
         self._last_pos: str = self.START_POS
         self._shifted_symbols_hor = 0
+        self._shifted_symbols_vert = 0
+        self.max_symbols_per_line = 0
         self.logger = logging.getLogger(__name__)
         self.logger.addHandler(StreamHandler(stream=sys.stdout))
         self.logger.setLevel(logging.WARNING)
@@ -40,8 +42,10 @@ class App:
 
         text = self.read_file(f"{os.path.dirname(os.path.realpath(__file__))}/{self.DEFAULT_TEST_PATH}")
         if text:
+            for line in text.splitlines():
+                if len(line) > self.max_symbols_per_line:
+                    self.max_symbols_per_line = len(line)
             self.text.insert("1.0", text)
-
         self.text_setup()
 
         # Setup processing core and state storage
@@ -58,7 +62,6 @@ class App:
 
         self.text.config(xscrollcommand=self.scroll_x.set, yscrollcommand=self.scroll_y.set)
         self.text.grid(row=0, column=0, sticky="nsew")
-
         self.scroll_x.config(command=self.text.xview)
         self.scroll_y.config(command=self.text.yview)
 
@@ -90,6 +93,8 @@ class App:
     def text_setup(self):
         self.text.mark_set("current", "1.0")
         self.text.mark_set("insert", "1.0")
+        self._last_pos: str = self.START_POS
+        self.text.config(width=self.max_symbols_per_line)
         self.text.focus_set()
 
     def click(self, event):
@@ -98,6 +103,9 @@ class App:
 
     def get_line_len(self, line: int):
         return len(self.text.get(f"{line}.0", f"{line}.end"))
+
+    def get_line_cnt(self):
+        return len(self.text.get('1.0', "end").split('\n')) - 1
 
     def press_event(self, event):
         if not event.char:
@@ -111,31 +119,33 @@ class App:
         line = int(current_pos.split(".")[0])
         column = int(current_pos.split(".")[1])
 
-        # Go back to the end of previous line
-        if event.keysym == "BackSpace" and column == 0 and line != 1:
-            line = line - 1
-            column = self.get_line_len(line) - 1
-            self.text.mark_set("insert", "%d.%d" % (line, column + 1))
-            self._last_pos = self.text.index(INSERT)
-            self.shift_if_need(column, line, "left", force_r=True)
-            return "break"
+        if event.keysym == "BackSpace":
+            # Go back to the end of previous line
+            if column == 0 and line != 1:
+                self.shift_if_need(column, line, event.keysym)
+                line = line - 1
+                column = self.get_line_len(line)
+                self.text.mark_set("insert", "%d.%d" % (line, column + 1))
+                self._last_pos = self.text.index(INSERT)
+                return "break"
+            # We are at the beginning of the file
+            if column == 0 and line == 1:
+                return "break"
         else:
-            # Colorize character
-            if event.keysym != "Return" and (column < self.get_line_len(line)):
-                self.colorize_character(event, line, column)
-
-        # For the case when we back to previous line using Backspace
-        if event.keysym == "BackSpace" and self.get_line_len(line) == column:
-            self.colorize_character(event, line, column)
-        else:
-            # Go to the next line if current is ended
+            # Key doesn't matter(except Backspace) if we reach end of line.
             if self.get_line_len(line) == column:
                 event.keysym = "Return"
-            else:
-                # Decline "Return" key if we are not on the last character
-                if event.keysym == "Return" and self.get_line_len(line) != (column + 1):
-                    self._last_pos = self.text.index(INSERT)
-                    return "break"
+
+        # Decline "Return" key if we are not on the last character
+        if event.keysym == "Return" and self.get_line_len(line) != column:
+            self._last_pos = self.text.index(INSERT)
+            return "break"
+
+        # Colorize character if the line is not empty
+        if self.get_line_len(line) > 0 and column <= self.get_line_len(line):
+            self.colorize_character(event, line, column)
+
+        self.shift_if_need(column, line, event.keysym)
 
         n_line = 0
         n_char = 0
@@ -143,22 +153,12 @@ class App:
             n_line = 1
             n_char = 0
             column = 0
-            self.shift_if_need(column, line, "left", force_l=True)
         elif event.keysym == "BackSpace":
-            if column == 0:
-                self.text.mark_set("insert", "%d.end" % (line - 1))
-                # Save the last position
-                self._last_pos = self.text.index(INSERT)
-                return "break"
-            else:
-                self.shift_if_need(column, line, "left")
-                n_char = -1
+            n_char = -1
         else:
-            # Shift working area if we reach the widget borders
-            self.shift_if_need(column, line)
             n_char = 1
 
-        # Second move cursor
+        # Move cursor
         self.text.mark_set("insert", "%d.%d" % (line + n_line, column + n_char))
         # Save the last position
         self._last_pos = self.text.index(INSERT)
@@ -172,42 +172,100 @@ class App:
 
         return "break"
 
-    def shift_if_need(self, column, line, dir_: str = "right", force_r: bool = False, force_l: bool = False):
-        all_symbols_per_line = self.get_line_len(line)
+    def shift_if_need(self, column, line, event_key: str):
+        symbols_per_curr_line = self.get_line_len(line)
         visible_symbols_per_line = self.text.winfo_width() // self.get_font_width()
+        visible_lines = self.text.winfo_height() // self.get_font_height()
 
+        # Calculate thresholds for the left, right, top and  bottom sides inside the window
         right_side_lvl_in_letters = int(math.floor(visible_symbols_per_line *
                                                    (1 - const.DEFAULT_SHIFT_FOCUS_TRIGGER/100)))
         left_side_lvl_in_letters = math.ceil(visible_symbols_per_line * const.DEFAULT_SHIFT_FOCUS_TRIGGER/100)
+        bottom_side_lvl_in_lines = int(math.floor(visible_lines *
+                                                  (1 - const.DEFAULT_SHIFT_FOCUS_TRIGGER/100)))
+        top_side_lvl_in_letters = math.ceil(visible_lines * const.DEFAULT_SHIFT_FOCUS_TRIGGER / 100)
 
-        if force_r:
-            self.shift_text_focus(x_symbols=all_symbols_per_line - visible_symbols_per_line)
-            self._shifted_symbols_hor = all_symbols_per_line - visible_symbols_per_line
-            return
+        # Top and bottom shifts for the 2 events:
+        # 1 - end of the line when event_key='Enter' to go to the next line.
+        # 2 - Beginning of the line. event_key='Backspace' to go to the prev line.
+        #     Line can be empty!
+        if column == 0 or column == symbols_per_curr_line:
+            win_up_shift = math.floor(self._shifted_symbols_vert + visible_lines / 2 - line)
 
-        if force_l:
+            self.logger.debug(f"First line: 0\n"
+                             f"-\n"
+                             f"-\n"
+                             f"{self._shifted_symbols_vert} + (can up for {win_up_shift})[\n"
+                             f"...\n"
+                             f"top level   : {top_side_lvl_in_letters}\n"
+                             f"...\n"
+                             f"active line : {line}\n"
+                             f"...\n"
+                             f"bottom level: {bottom_side_lvl_in_lines}\n"
+                             f"...\n"
+                             f"]  {visible_lines + self._shifted_symbols_vert}\n"
+                             f"-\n"
+                             f"Last line: {self.get_line_cnt()} \n\n")
+
+            # Check bottom border
+            if ((line - self._shifted_symbols_vert) >= bottom_side_lvl_in_lines) and \
+                    (self._shifted_symbols_vert + visible_lines < self.get_line_cnt()):
+                win_down_shift = int(line - self._shifted_symbols_vert - visible_lines / 2) % \
+                          (self.get_line_cnt() - visible_lines)
+                self.shift_text_focus(y_symbols=win_down_shift)
+                self._shifted_symbols_vert += win_down_shift
+                self.logger.debug(f"Shifted down {win_down_shift}")
+
+            # Check top border
+            elif self._shifted_symbols_vert >= win_up_shift and\
+                    (line - self._shifted_symbols_vert <= top_side_lvl_in_letters):
+                self._shifted_symbols_vert -= win_up_shift
+                self.shift_text_focus(y_symbols=-win_up_shift)
+                self.logger.debug(f"Shifted top: {win_up_shift}")
+
+        self.logger.debug(f"Start: ... {self._shifted_symbols_hor} ... [ ..{left_side_lvl_in_letters}....{column}"
+                          f"....{right_side_lvl_in_letters}..] {visible_symbols_per_line} ... END "
+                          f"{symbols_per_curr_line}")
+        # Calc right border
+        win_left_shift = math.floor(self._shifted_symbols_hor + visible_lines / 2 - column)
+
+        # Check for special conditions
+
+        # End of line and we type Return
+        if event_key == "Return":
             self.text.xview_moveto(0)
             self._shifted_symbols_hor = 0
             return
 
-        if dir_ != "left":
-            # Check right border
-            if (column - self._shifted_symbols_hor) >= right_side_lvl_in_letters:
-                r_shift = int(right_side_lvl_in_letters - visible_symbols_per_line/2) % \
-                          (all_symbols_per_line - visible_symbols_per_line)
-                self.shift_text_focus(x_symbols=r_shift)
-                self._shifted_symbols_hor += r_shift
-                self.logger.debug(f"Shifted right {r_shift}")
+        # Begin of line and we type BackSpace
+        if event_key == "BackSpace" and column == 0:
+            try:
+                shift = self.get_line_len(line - 1) - left_side_lvl_in_letters
+                if shift > 0:
+                    self.text.xview_moveto(shift / self.max_symbols_per_line)
+                    self._shifted_symbols_hor = shift
+                else:
+                    self._shifted_symbols_hor = 0
+            except():
+                self.logger.warning("Max line in the file iz 0 !")
+            return
 
-        # Check left border
-        self.logger.debug(f"curr_col: {column}, shift: {self._shifted_symbols_hor}, l_lvl: {left_side_lvl_in_letters},"
-              f" r_lvl: {right_side_lvl_in_letters}\n all: {all_symbols_per_line}, window: {visible_symbols_per_line}\n")
+        # Check left and right borders
 
-        if self._shifted_symbols_hor > 0 and column >= left_side_lvl_in_letters and \
-                (column - self._shifted_symbols_hor <= left_side_lvl_in_letters):
-            self._shifted_symbols_hor -= left_side_lvl_in_letters
-            self.shift_text_focus(x_symbols=-left_side_lvl_in_letters)
-            self.logger.debug(f"Shifted left: {left_side_lvl_in_letters}")
+        # Right border
+        if (column - self._shifted_symbols_hor) >= right_side_lvl_in_letters:
+            r_shift = math.floor((column - (self._shifted_symbols_hor + visible_symbols_per_line/2)) %
+                                 (symbols_per_curr_line - visible_symbols_per_line))
+            self.shift_text_focus(x_symbols=r_shift)
+            self._shifted_symbols_hor += r_shift
+            self.logger.debug(f"Shifted right {r_shift}")
+
+        # Left border
+        elif (self._shifted_symbols_hor >= 1) and (win_left_shift > 0)\
+                and (column - self._shifted_symbols_hor <= left_side_lvl_in_letters):
+            self._shifted_symbols_hor -= win_left_shift
+            self.shift_text_focus(x_symbols=-win_left_shift)
+            self.logger.debug(f"Shifted left: {win_left_shift}")
 
     def colorize_character(self, event, line: int, col: int):
         if event.keysym == "BackSpace":
@@ -243,12 +301,12 @@ class App:
                                               title="Select file", filetypes=f_types)
         if filename != '':
             text = self.read_file(filename)
-            max_symbols_per_line = 0
+            self.max_symbols_per_line = 0
             for line in text.splitlines():
-                if len(line) > max_symbols_per_line:
-                    max_symbols_per_line = len(line)
+                if len(line) > self.max_symbols_per_line:
+                    self.max_symbols_per_line = len(line)
 
-            max_symbols_per_line += 1
+            self.max_symbols_per_line += 1
             self.txt_state_storage.reset()
             self.text.tag_delete(ALL)
             self.text.delete("1.0", END)
@@ -262,13 +320,13 @@ class App:
             # If file text doesn't fit to our default window we resize our window
             # but be aware about padding and widgets align
             # TODO screen boundaries
-            if default_font_width * max_symbols_per_line > (self._root.winfo_width() - self.stat_frame.winfo_width()):
-                new_window_width = default_font_width * max_symbols_per_line + self.stat_frame.winfo_width() + \
+            if default_font_width * self.max_symbols_per_line > (self._root.winfo_width() - self.stat_frame.winfo_width()):
+                new_window_width = default_font_width * self.max_symbols_per_line + self.stat_frame.winfo_width() + \
                                    self._frame_stat_pad * 2 + self.scroll_y.winfo_width()
                 self._root.geometry(f"{new_window_width}x{self._root.winfo_height()}+"
                                     f"{int((root.winfo_screenwidth() - int(new_window_width))/2)}+"
                                     f"{int((root.winfo_screenheight()-int(self._root.winfo_height()))/2)}")
-                self.text.config(width=max_symbols_per_line)
+                self.text.config(width=self.max_symbols_per_line)
                 self.logger.debug(self._root.winfo_height(), new_window_width)
 
     def shift_text_focus(self, x_symbols=None, y_symbols=None):
@@ -283,6 +341,10 @@ class App:
         else:
             return 0
 
+    def get_font_height(self):
+        if self.text:
+            return tkfont.Font(font=self.text['font']).metrics('linespace')
+
     def read_file(self, filename):
         try:
             with open(filename, "r") as file:
@@ -295,10 +357,9 @@ class App:
 if __name__ == "__main__":
     root = Tk()
     width, height = const.DEFAULT_WINDOW_WIDTH, const.DEFAULT_WINDOW_HEIGHT
-    root.geometry(f"{width}x{height}+{int((root.winfo_screenwidth()-int(width))/2)}+"
-                  f"{int((root.winfo_screenheight()-int(height))/2)}")
+    root.geometry(f"{width}x{height}+{int((root.winfo_screenwidth()-width)/2)}+"
+                  f"{int((root.winfo_screenheight()-height)/2)}")
     root.minsize(height=height, width=width)
-    root.maxsize(height=root.winfo_screenheight(), width=root.winfo_screenwidth())
     root.title(const.DEFAULT_WINDOW_TITLE)
     app = App(root)
     root.mainloop()

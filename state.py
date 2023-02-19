@@ -14,7 +14,7 @@ class StateStorage:
 
     def reset(self):
         self.pos.good.left = self.pos.good.right = Coord(line=1, col=0)
-        self.pos.bad.left = self.pos.good.right = Coord(line=1, col=0)
+        self.pos.bad.left = self.pos.bad.right = Coord(line=1, col=0)
 
     def save_state(self, st_name: Literal[const._CORRECT, const._INCORRECT], left: Coord, right: Coord):
         if st_name == const._INCORRECT:
