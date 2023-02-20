@@ -39,6 +39,9 @@ class TextProcessor:
             if line_in < right.line:
                 # Shrink on the PREVIOUS line for ONE letter from the RIGHT
                 saved_borders = self._parent.text.tag_ranges(f"{color}_tag_{line_in}")
+                if not saved_borders:
+                    self._parent.logger.error("No tag:{color}_tag_{line_in}")
+                    return
                 left_border_col = int(saved_borders[0].string.split(".")[1])
                 self._parent.text.tag_remove(f"{color}_tag_{line_in}", f"{line_in}.{col_in}")
                 self._parent.text.tag_configure(f"{color}_tag_{line_in}", background=f"{color}")
